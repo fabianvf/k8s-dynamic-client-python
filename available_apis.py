@@ -7,48 +7,107 @@ import kubernetes
 from kubernetes import config
 from kubernetes.client.api_client import ApiClient
 
+class Resource(object):
 
-class Helper(object):
+    def __init__(self, prefix=None, group=None, apiversion=None, kind=None, namespace=None, name=None, definition=None):
+        if None in (apiversion, kind):
+            raise Exception("At least kind and apiversion must be provided")
 
-    def __init__(self, apiversion=None, kind=None):
+        self._prefix = prefix
+        self.group = group
+        self.apiversion = apiversion
+        self.kind = kind
+        self.namespace = namespace
+        self.name = name
+        self.definition = definition
+
+    @property
+    def prefix(self):
+        raise NotImplementedError
+
+    @property
+    def resource_name(self):
+        return self.kind.lower() + 's'
+
+    @property
+    def urls(self):
+        if self.group:
+            full_prefix = '{}/{}/{}'.format(self.prefix, self.group, self.apiversion)
+        else:
+            full_prefix = '{}/{}'.format(self.prefix, self.apiversion)
+        return {
+            'base': '{}/{}'.format(full_prefix, self.resource_name),
+            'namespaced_base': '{}/namespaces/{{namespace}}/{}'.format(full_prefix, self.resource_name),
+            'full': '{}/{}/{{name}}'.format(full_prefix, self.resource_name),
+            'namespaced_full': '{}/namespaces/{{namespace}}/{}/{{name}}'.format(full_prefix, self.resource_name)
+        }
+
+class K8sResource(Resource):
+
+    @property
+    def prefix(self):
+        if self._prefix:
+            return self._prefix
+        elif self.apiversion == 'v1' and not self.group:
+            return '/api'
+        else:
+            return '/apis'
+
+class OpenshiftResource(Resource):
+
+    @property
+    def prefix(self):
+        if self._prefix:
+            return self._prefix
+        elif self.apiversion == 'v1' and not self.group:
+            return '/oapi'
+        else:
+            return '/apis'
+
+
+
+class ApisHelper(object):
+
+    def __init__(self):
         config.load_kube_config()
         self.client = ApiClient()
-        self._apiversion = apiversion
-        self._kind = kind
-        if kind and apiversion:
-            self.get_attributes()
+        # self._groups = [('/api/v1'), ('/oapi/v1')] + self.get_api_groups()
+        # self._resources = map(self.get_resources_for_group, self._groups)
 
-    def get_attributes(self):
-        if self._apiversion == 'v1':
-            prefixes = ['/api/', '/oapi/']
+    # def get_attributes(self):
+    #     if self._apiversion == 'v1':
+    #         prefixes = ['/api/', '/oapi/']
+    #     else:
+    #         prefixes = ['/apis/']
+    #     candidates = {}
+    #     for prefix in prefixes:
+    #         url = self._cluster + prefix
+    #         resources = get_resources_for_group(url, self._apiversion)
+    #         filtered = {k[0]: v for k, v in resources.items() if self._kind == k[1]}
+    #         if filtered:
+    #             candidates[prefix] = filtered
+    #     if len(candidates.keys()) != 1:
+    #         import ipdb
+    #         ipdb.set_trace()
+    #     self._prefix = candidates.keys()[0]
+    #     self._resources = candidates.values()[0]
+
+
+    def get_api_groups(self):
+        groups = self.request('GET', '/apis')['groups']
+        return [('apis', item) for sublist in map(lambda x: map(lambda y: y['groupVersion'], x['versions']), groups) for item in sublist]
+
+    def get_resources_for_group(self, prefix_group):
+        prefix, group = prefix_group
+        resources = self.request('GET', '/'.join([prefix, group]))['resources']
+        return {(x['name'], x['kind'], group): x for x in resources}
+
+    def list(self, resource):
+        if resource.namespace:
+            resource_path = resource.urls['namespaced_base']
         else:
-            prefixes = ['/apis/']
-        candidates = {}
-        for prefix in prefixes:
-            url = self._cluster + prefix
-            resources = get_resources_for_group(url, self._apiversion)
-            filtered = {k[0]: v for k, v in resources.items() if self._kind == k[1]}
-            if filtered:
-                candidates[prefix] = filtered
-        if len(candidates.keys()) != 1:
-            import ipdb
-            ipdb.set_trace()
-        self._prefix = candidates.keys()[0]
-        self._resources = candidates.values()[0]
-
-    def apis_for(self, action):
-        candidates = []
-        for name, resource in self._resources.items():
-            if action in resource['verbs']:
-                candidates.append(name)
-        if len(candidates) != 1:
-            import ipdb
-            ipdb.set_trace()
-        return sorted(candidates, key=len)[0]
-
-    def list(self, namespace=None):
-        resource_path = self.apis_for('list')
-        return requests.get('/'.join([self._cluster, self._prefix, self._apiversion, resource_path]), verify=False)
+            resource_path = resource.urls['base']
+        return self.request('get', resource_path)
 
     def get(self, name=None, namespace=None):
         return requests.get('/'.join([self._url, self._prefix, self._apiversion, self._kind]), verify=False)
@@ -74,15 +133,10 @@ class Helper(object):
     def proxy(self, name=None, namespace=None):
         pass
 
-    def get_api_groups(self):
-        groups = self.request('GET', '/apis')['groups']
-        return [item for sublist in map(lambda x: map(lambda y: y['groupVersion'], x['versions']), groups) for item in sublist]
-
-    def get_resources_for_group(self, prefix, group):
-        resources = self.request('GET', '/'.join([prefix, group]))['resources']
-        return {(x['name'], x['kind'], group): x for x in resources}
-
     def request(self, method, path, body=None, **params):
+
+        if not path.startswith('/'):
+            path = '/' + path
 
         path_params = {}
         query_params = []
