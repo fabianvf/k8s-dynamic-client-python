@@ -114,14 +114,26 @@ class Helper(object):
             resource_path = resource.urls['base']
         return self.request('get', resource_path, path_params=path_params)
 
-    def get(self, name=None, namespace=None):
-        return requests.get('/'.join([self._url, self._prefix, self._apiversion, self._kind]), verify=False)
+    def get(self, resource, name, namespace=None):
+        path_params = {'name': name}
+        if resource.namespaced and namespace:
+            resource_path = resource.urls['namespaced_full']
+            path_params['namespace'] = namespace
+        else:
+            resource_path = resource.urls['full']
+        return self.request('get', resource_path, path_params=path_params)
 
     def create(self, name=None, namespace=None, body=None):
         pass
 
-    def delete(self, name=None, namespace=None):
-        pass
+    def delete(self, resource, name, namespace=None):
+        path_params = {'name': name}
+        if resource.namespaced and namespace:
+            resource_path = resource.urls['namespaced_full']
+            path_params['namespace'] = namespace
+        else:
+            resource_path = resource.urls['full']
+        return self.request('delete', resource_path, path_params=path_params)
 
     def update(self, name=None, namespace=None, body=None):
         pass
@@ -143,7 +155,7 @@ class Helper(object):
         if not path.startswith('/'):
             path = '/' + path
 
-        path_params = {}
+        path_params = params.get('path_params', {})
         query_params = []
         if 'pretty' in params:
             query_params.append(('pretty', params['pretty']))
