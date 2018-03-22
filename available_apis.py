@@ -2,14 +2,18 @@
 
 import sys
 import json
-import requests
+from functools import partial
+
 import kubernetes
 from kubernetes import config
 from kubernetes.client.api_client import ApiClient
 
 class Resource(object):
 
-    def __init__(self, prefix=None, group=None, apiversion=None, kind=None, namespaced=False, verbs=None, name=None, **kwargs):
+    def __init__(self, prefix=None, group=None, apiversion=None, kind=None,
+                 namespaced=False, verbs=None, name=None, preferred=False, helper=None,
+                 singularName=None, shortNames=None, categories=None, **kwargs):
+
         if None in (apiversion, kind):
             raise Exception("At least kind and apiversion must be provided")
 
@@ -20,28 +24,28 @@ class Resource(object):
         self.namespaced = namespaced
         self.verbs = verbs
         self.name = name
+        self.preferred = preferred
+        self.helper = helper
+        self.singular_name = singularName
+        self.short_names = shortNames
+        self.categories = categories
 
-        allowed_extra_args = ['singularName', 'shortNames', 'categories']
         self.extra_args = kwargs
-        for kwarg in kwargs.keys():
-            if kwarg not in allowed_extra_args:
-                import pdb
-                pdb.set_trace()
 
     def __repr__(self):
         if self.group:
             groupversion = '{}/{}'.format(self.group, self.apiversion)
         else:
             groupversion = self.apiversion
-        return '{}({}.{})'.format(self.__class__.__name__, groupversion, self.kind)
+        return '<{}({}.{}>)'.format(self.__class__.__name__, groupversion, self.kind)
 
 
     @staticmethod
-    def make_resource(prefix, group, apiversion, resource):
+    def make_resource(prefix, group, apiversion, resource, preferred=False, helper=None):
         if prefix == 'oapi':
-            return OpenshiftResource(prefix=prefix, group=group, apiversion=apiversion, **resource)
+            return OpenshiftResource(prefix=prefix, group=group, apiversion=apiversion, helper=helper, preferred=preferred, **resource)
         else:
-            return K8sResource(prefix=prefix, group=group, apiversion=apiversion, **resource)
+            return K8sResource(prefix=prefix, group=group, apiversion=apiversion, helper=helper, preferred=preferred, **resource)
 
     @property
     def prefix(self):
@@ -61,6 +65,10 @@ class Resource(object):
             'full': '/{}/{}/{{name}}'.format(full_prefix, self.name),
             'namespaced_full': '/{}/namespaces/{{namespace}}/{}/{{name}}'.format(full_prefix, self.name)
         }
+
+    def __getattr__(self, name):
+        return partial(getattr(self.helper, name), self)
+
 
 class K8sResource(Resource):
 
@@ -85,25 +93,79 @@ class OpenshiftResource(Resource):
             return '/apis'
 
 
+def flatten(l):
+    return [item for sublist in l for item in sublist]
+
 class Helper(object):
 
     def __init__(self):
         config.load_kube_config()
         self.client = ApiClient()
-        self._groups = [('api', ('', 'v1')), ('oapi', ('', 'v1'))] + self.get_api_groups()
-        self._resources = [x for sublist in map(self.get_resources_for_group, self._groups) for x in sublist]
+        self._groups = self.get_api_groups()
+        self._resources = flatten([self.get_resources_for_group(group) for group in self._groups])
 
     def get_api_groups(self):
-        groups = self.request('GET', '/apis')['groups']
-        return [('apis', item) for sublist in map(lambda x: map(lambda y: (x['name'], y['version']), x['versions']), groups) for item in sublist]
+        """ Returns a list of API groups in the format:
+            (api_prefix, group_name, version, preferred)
 
-    def get_resources_for_group(self, prefix_groupVersion):
-        prefix, (group, apiversion) = prefix_groupVersion
-        resources = filter(lambda x: '/' not in x['name'], self.request('GET', '/'.join(filter(lambda x: x, [prefix, group, apiversion])))['resources'])
-        return [Resource.make_resource(prefix, group, apiversion, x) for x in resources]
+            api_prefix is the url prefix to access the group (usually /apis, but
+            /api for core kubernetes resources and /oapi for core openshift resources)
 
-    def get_resources(self, conditional):
-        return filter(conditional, self._resources)
+            group_name and version are the name and version of the group
+
+            preferred is a boolean indicating whether this version of the group is preferred
+        """
+        prefix = 'apis'
+        groups_response = self.request('GET', '/{}'.format(prefix))['groups']
+
+        groups = [('api', '', 'v1', True), ('oapi', '', 'v1', True)]
+
+        for group in groups_response:
+            for version in group['versions']:
+                groups.append([
+                    prefix,
+                    group['name'],
+                    version['version'],
+                    version == group['preferredVersion']
+                ])
+
+        return groups
+
+    def get_resources_for_group(self, group_parts):
+        prefix, group, apiversion, preferred = group_parts
+
+        path = '/'.join(filter(None, [prefix, group, apiversion]))
+        resources_response = self.request('GET', path)['resources']
+
+        # Filter out subresources
+        resources_raw = filter(lambda resource: '/' not in resource['name'], resources_response)
+
+        resources = []
+        for resource in resources_raw:
+            resources.append(Resource.make_resource(
+                prefix,
+                group,
+                apiversion,
+                resource,
+                helper=self,
+                preferred=preferred
+            ))
+        return resources
+
+    def search_resources(self, conditional):
+        """ Takes a conditional test and returns a list of resources that satisfy the test
+            The test should take an object of the Resource type as an argument,
+            and return a boolean
+
+        Ex:
+            def is_namespaces(resource):
+                return resource.name == 'namespaces'
+
+            helper.search_resources(is_namespaces)
+
+        will return all resources with the name 'namespaces'
+        """
+        return list(filter(conditional, self._resources))
 
     def list(self, resource, namespace=None):
         path_params = {}
@@ -123,8 +185,14 @@ class Helper(object):
             resource_path = resource.urls['full']
         return self.request('get', resource_path, path_params=path_params)
 
-    def create(self, name=None, namespace=None, body=None):
-        pass
+    def create(self, resource, body, namespace=None):
+        path_params = {}
+        if resource.namespaced and namespace:
+            resource_path = resource.urls['namespaced_base']
+            path_params['namespace'] = namespace
+        else:
+            resource_path = resource.urls['base']
+        return self.request('post', resource_path, path_params=path_params, body=body)
 
     def delete(self, resource, name, namespace=None):
         path_params = {'name': name}
@@ -162,7 +230,6 @@ class Helper(object):
         header_params = {}
         form_params = []
         local_var_files = {}
-        body_params = None
         # HTTP header `Accept`
         header_params['Accept'] = self.client.\
             select_header_accept(['application/json', 'application/yaml', 'application/vnd.kubernetes.protobuf'])
@@ -174,31 +241,32 @@ class Helper(object):
         # Authentication setting
         auth_settings = ['BearerToken']
 
-        return json.loads(self.client.call_api(path, method.upper(),
-                                        path_params,
-                                        query_params,
-                                        header_params,
-                                        body=body,
-                                        post_params=form_params,
-                                        files=local_var_files,
-                                        auth_settings=auth_settings,
-                                        _preload_content=False)[0].data)
-
+        return json.loads(self.client.call_api(
+            path,
+            method.upper(),
+            path_params,
+            query_params,
+            header_params,
+            body=body,
+            post_params=form_params,
+            files=local_var_files,
+            auth_settings=auth_settings,
+            _preload_content=False
+        )[0].data)
 
 
 def main():
-    import ipdb
-    with ipdb.launch_ipdb_on_exception():
-        helper = Helper()
-        ret = {}
-        for resource in helper._resources:
-            if resource.namespaced:
-                key = resource.urls['namespaced_full']
-            else:
-                key = resource.urls['full']
-            ret[key] = resource.__dict__
+    helper = Helper()
+    ret = {}
+    for resource in helper._resources:
+        if resource.namespaced:
+            key = resource.urls['namespaced_full']
+        else:
+            key = resource.urls['full']
+        ret[key] = dict(list(filter(lambda kv: kv[0] != 'helper', resource.__dict__.items())))
 
-        print(json.dumps(ret, sort_keys=True, indent=4))
+    print(json.dumps(ret, sort_keys=True, indent=4))
+    return 0
 
 
 if __name__ == '__main__':
