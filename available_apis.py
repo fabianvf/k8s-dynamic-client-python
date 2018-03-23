@@ -102,7 +102,7 @@ class Helper(object):
         config.load_kube_config()
         self.client = ApiClient()
         self._groups = self.get_api_groups()
-        self._resources = flatten([self.get_resources_for_group(group) for group in self._groups])
+        self._resources = flatten([self.get_resources_for_group(*group_parts) for group_parts in self._groups])
 
     def get_api_groups(self):
         """ Returns a list of API groups in the format:
@@ -131,8 +131,8 @@ class Helper(object):
 
         return groups
 
-    def get_resources_for_group(self, group_parts):
-        prefix, group, apiversion, preferred = group_parts
+    def get_resources_for_group(self, prefix, group, apiversion, preferred=False):
+        """ returns the list of resources associated with provided groupVersion"""
 
         path = '/'.join(filter(None, [prefix, group, apiversion]))
         resources_response = self.request('GET', path)['resources']
