@@ -176,7 +176,9 @@ class Helper(object):
             resource_path = resource.urls['base']
         return self.request('get', resource_path, path_params=path_params)
 
-    def get(self, resource, name, namespace=None):
+    def get(self, resource, name=None, namespace=None):
+        if name is None:
+            return self.list(resource, namespace=namespace)
         path_params = {'name': name}
         if resource.namespaced and namespace:
             resource_path = resource.urls['namespaced_full']
@@ -190,6 +192,10 @@ class Helper(object):
         if resource.namespaced and namespace:
             resource_path = resource.urls['namespaced_base']
             path_params['namespace'] = namespace
+        elif resource.namespaced and not namespace:
+            if body.get('metadata') and body['metadata'].get('namespace'):
+                resource_path = resource.urls['namespaced_base']
+                path_params['namespace'] = body['metadata']['namespace']
         else:
             resource_path = resource.urls['base']
         return self.request('post', resource_path, path_params=path_params, body=body)
