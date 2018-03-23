@@ -90,10 +90,10 @@ def default_search(term):
     def inner(resource):
         for value in resource.__dict__.values():
             if term == value:
-                return True
+                return resource.preferred
             elif isinstance(value, (list, tuple)):
                 if term in value:
-                    return True
+                    return resource.preferred
         return False
     return inner
 
