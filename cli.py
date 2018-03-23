@@ -8,7 +8,7 @@ import yaml
 
 from dynamic_client import DynamicClient
 
-USAGE=""" {cmd}: The python implementation of oc
+USAGE=""" {cmd}: A dynamic python cli for kubernetes
 
 USAGE:
     {cmd} list RESOURCE -n [NAMESPACE]
@@ -119,8 +119,10 @@ def main():
         print('Invocation error: Action `{}` is not supported, supported actions are {}'.format(action, '|'.join(methods().keys())), file=sys.stderr)
         sys.exit(1)
 
+
 def pprint(x):
     print(json.dumps(x, sort_keys=True, indent=4))
+
 
 if __name__ == '__main__':
     try:
