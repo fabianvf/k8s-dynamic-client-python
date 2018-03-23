@@ -6,7 +6,7 @@ import sys
 import json
 import yaml
 
-from available_apis import Helper
+from dynamic_client import DynamicClient
 
 USAGE=""" {cmd}: The python implementation of oc
 
@@ -106,7 +106,7 @@ def main():
     search_term = sys.argv[2]
     args = sys.argv[3:]
 
-    helper = Helper()
+    helper = DynamicClient()
     search_results = helper.search_resources(default_search(search_term))
     try:
         resource = search_results[0]

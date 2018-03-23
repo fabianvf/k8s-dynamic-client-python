@@ -7,11 +7,12 @@ from functools import partial
 import kubernetes
 from kubernetes import config
 from kubernetes.client.api_client import ApiClient
+from kubernetes.client.rest import ApiException
 
 class Resource(object):
 
     def __init__(self, prefix=None, group=None, apiversion=None, kind=None,
-                 namespaced=False, verbs=None, name=None, preferred=False, helper=None,
+                 namespaced=False, verbs=None, name=None, preferred=False, client=None,
                  singularName=None, shortNames=None, categories=None, **kwargs):
 
         if None in (apiversion, kind):
@@ -25,7 +26,7 @@ class Resource(object):
         self.verbs = verbs
         self.name = name
         self.preferred = preferred
-        self.helper = helper
+        self.client = client
         self.singular_name = singularName
         self.short_names = shortNames
         self.categories = categories
@@ -41,11 +42,11 @@ class Resource(object):
 
 
     @staticmethod
-    def make_resource(prefix, group, apiversion, resource, preferred=False, helper=None):
+    def make_resource(prefix, group, apiversion, resource, preferred=False, client=None):
         if prefix == 'oapi':
-            return OpenshiftResource(prefix=prefix, group=group, apiversion=apiversion, helper=helper, preferred=preferred, **resource)
+            return OpenshiftResource(prefix=prefix, group=group, apiversion=apiversion, client=client, preferred=preferred, **resource)
         else:
-            return K8sResource(prefix=prefix, group=group, apiversion=apiversion, helper=helper, preferred=preferred, **resource)
+            return K8sResource(prefix=prefix, group=group, apiversion=apiversion, client=client, preferred=preferred, **resource)
 
     @property
     def prefix(self):
@@ -67,7 +68,7 @@ class Resource(object):
         }
 
     def __getattr__(self, name):
-        return partial(getattr(self.helper, name), self)
+        return partial(getattr(self.client, name), self)
 
 
 class K8sResource(Resource):
@@ -96,13 +97,26 @@ class OpenshiftResource(Resource):
 def flatten(l):
     return [item for sublist in l for item in sublist]
 
-class Helper(object):
+class DynamicClient(object):
 
     def __init__(self):
         config.load_kube_config()
         self.client = ApiClient()
         self._groups = self.get_api_groups()
         self._resources = flatten([self.get_resources_for_group(*group_parts) for group_parts in self._groups])
+
+    def default_groups(self):
+        groups = [('api', '', 'v1', True)]
+
+        try:
+            self.request('get', '/version/openshift')
+            is_openshift = True
+        except ApiException:
+            is_openshift = False
+
+        if is_openshift:
+            groups.append(('oapi', '', 'v1', True))
+        return groups
 
     def get_api_groups(self):
         """ Returns a list of API groups in the format:
@@ -118,7 +132,7 @@ class Helper(object):
         prefix = 'apis'
         groups_response = self.request('GET', '/{}'.format(prefix))['groups']
 
-        groups = [('api', '', 'v1', True), ('oapi', '', 'v1', True)]
+        groups = self.default_groups()
 
         for group in groups_response:
             for version in group['versions']:
@@ -147,7 +161,7 @@ class Helper(object):
                 group,
                 apiversion,
                 resource,
-                helper=self,
+                client=self,
                 preferred=preferred
             ))
         return resources
@@ -161,7 +175,7 @@ class Helper(object):
             def is_namespaces(resource):
                 return resource.name == 'namespaces'
 
-            helper.search_resources(is_namespaces)
+            client.search_resources(is_namespaces)
 
         will return all resources with the name 'namespaces'
         """
@@ -262,14 +276,14 @@ class Helper(object):
 
 
 def main():
-    helper = Helper()
+    client = DynamicClient()
     ret = {}
-    for resource in helper._resources:
+    for resource in client._resources:
         if resource.namespaced:
             key = resource.urls['namespaced_full']
         else:
             key = resource.urls['full']
-        ret[key] = dict(list(filter(lambda kv: kv[0] != 'helper', resource.__dict__.items())))
+        ret[key] = dict(list(filter(lambda kv: kv[0] != 'client', resource.__dict__.items())))
 
     print(json.dumps(ret, sort_keys=True, indent=4))
     return 0
