@@ -223,10 +223,25 @@ class DynamicClient(object):
             resource_path = resource.urls['full']
         return self.request('delete', resource_path, path_params=path_params)
 
-    # def update(self, name=None, namespace=None, body=None):
-    #     raise NotImplementedError
+    def replace(self, resource, body, name=None, namespace=None):
+        if name is None:
+            name = body['metadata']['name']
+        path_params = {'name': name}
+        if resource.namespaced and namespace:
+            resource_path = resource.urls['namespaced_full']
+            path_params['namespace'] = namespace
+        elif resource.namespaced and not namespace:
+            if body.get('metadata') and body['metadata'].get('namespace'):
+                resource_path = resource.urls['namespaced_full']
+                path_params['namespace'] = body['metadata']['namespace']
+        else:
+            resource_path = resource.urls['full']
 
-    def patch(self, resource, body, name, namespace=None):
+        return self.request('put', resource_path, path_params=path_params, body=body)
+
+    def update(self, resource, body, name=None, namespace=None):
+        if name is None:
+            name = body['metadata']['name']
         path_params = {'name': name}
         if resource.namespaced and namespace:
             resource_path = resource.urls['namespaced_full']

@@ -16,6 +16,7 @@ USAGE:
     {cmd} delete RESOURCE NAME [-n NAMESPACE]
     {cmd} create RESOURCE [-n NAMESPACE] -f FILE
     {cmd} update RESOURCE [-n NAMESPACE] -f FILE
+    {cmd} replace RESOURCE [-n NAMESPACE] -f FILE
 
     RESOURCE is a string that will be used to search for a matching resource in the cluster
     NAME is the name of a specific resource
@@ -30,7 +31,8 @@ def methods(name=None):
         'get': get,
         'delete': delete,
         'create': create,
-        'update': update
+        'update': update,
+        'replace': replace
     }
     if name:
         return method_mapping[name]
@@ -71,6 +73,7 @@ def delete(resource, *args):
 
     return resource.delete(name, namespace)
 
+
 def create(resource, *args):
     args = list(args)
     namespace, args = parse_namespace(args)
@@ -87,6 +90,7 @@ def create(resource, *args):
 
     return resource.create(body, namespace=namespace)
 
+
 def update(resource, *args):
     args = list(args)
     namespace, args = parse_namespace(args)
@@ -101,13 +105,34 @@ def update(resource, *args):
     if len(args) > 1:
         name = args.pop()
     else:
-        name = body['metadata']['name']
+        name = None
 
     if args:
         raise RuntimeError("Too many arguments provided to `update`")
 
+    return resource.update(body, name=name, namespace=namespace)
 
-    return resource.patch(body, name, namespace=namespace)
+
+def replace(resource, *args):
+    args = list(args)
+    namespace, args = parse_namespace(args)
+
+    pos = args.index('-f')
+    args.pop(pos)
+    filename = args.pop(pos)
+
+    with open(filename, 'r') as f:
+        body = yaml.load(f.read())
+
+    if len(args) > 1:
+        name = args.pop()
+    else:
+        name = None
+
+    if args:
+        raise RuntimeError("Too many arguments provided to `update`")
+
+    return resource.replace(body, name=name, namespace=namespace)
 
 def default_search(term):
     def inner(resource):
