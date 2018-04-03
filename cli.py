@@ -11,10 +11,11 @@ from dynamic_client import DynamicClient
 USAGE=""" {cmd}: A dynamic python cli for kubernetes
 
 USAGE:
-    {cmd} list RESOURCE -n [NAMESPACE]
-    {cmd} get RESOURCE [NAME] -n [NAMESPACE]
-    {cmd} delete RESOURCE NAME -n [NAMESPACE]
-    {cmd} create RESOURCE -n [NAMESPACE] -f FILE
+    {cmd} list RESOURCE [-n NAMESPACE]
+    {cmd} get RESOURCE [NAME] [-n NAMESPACE]
+    {cmd} delete RESOURCE NAME [-n NAMESPACE]
+    {cmd} create RESOURCE [-n NAMESPACE] -f FILE
+    {cmd} update RESOURCE [-n NAMESPACE] -f FILE
 
     RESOURCE is a string that will be used to search for a matching resource in the cluster
     NAME is the name of a specific resource
@@ -28,7 +29,8 @@ def methods(name=None):
         'list': list_resources,
         'get': get,
         'delete': delete,
-        'create': create
+        'create': create,
+        'update': update
     }
     if name:
         return method_mapping[name]
@@ -85,6 +87,27 @@ def create(resource, *args):
 
     return resource.create(body, namespace=namespace)
 
+def update(resource, *args):
+    args = list(args)
+    namespace, args = parse_namespace(args)
+
+    pos = args.index('-f')
+    args.pop(pos)
+    filename = args.pop(pos)
+
+    with open(filename, 'r') as f:
+        body = yaml.load(f.read())
+
+    if len(args) > 1:
+        name = args.pop()
+    else:
+        name = body['metadata']['name']
+
+    if args:
+        raise RuntimeError("Too many arguments provided to `update`")
+
+
+    return resource.patch(body, name, namespace=namespace)
 
 def default_search(term):
     def inner(resource):
@@ -126,7 +149,9 @@ def pprint(x):
 
 if __name__ == '__main__':
     try:
-        pprint(main())
+        import ipdb
+        with ipdb.launch_ipdb_on_exception():
+            pprint(main())
     except Exception as e:
         print(USAGE.format(cmd=sys.argv[0]))
         print('Invocation failed! {}'.format(e), file=sys.stderr)

@@ -223,20 +223,33 @@ class DynamicClient(object):
             resource_path = resource.urls['full']
         return self.request('delete', resource_path, path_params=path_params)
 
-    def update(self, name=None, namespace=None, body=None):
-        pass
+    # def update(self, name=None, namespace=None, body=None):
+    #     raise NotImplementedError
 
-    def patch(self, name=None, namespace=None, body=None):
-        pass
+    def patch(self, resource, body, name, namespace=None):
+        path_params = {'name': name}
+        if resource.namespaced and namespace:
+            resource_path = resource.urls['namespaced_full']
+            path_params['namespace'] = namespace
+        elif resource.namespaced and not namespace:
+            if body.get('metadata') and body['metadata'].get('namespace'):
+                resource_path = resource.urls['namespaced_full']
+                path_params['namespace'] = body['metadata']['namespace']
+        else:
+            resource_path = resource.urls['full']
+        content_type = self.client.\
+            select_header_content_type(['application/json-patch+json', 'application/merge-patch+json', 'application/strategic-merge-patch+json'])
 
-    def watch(self, name=None, namespace=None):
-        pass
+        return self.request('patch', resource_path, path_params=path_params, body=body, content_type=content_type)
 
-    def deletecollection(self, name=None, namespace=None):
-        pass
+#     def watch(self, name=None, namespace=None):
+#         raise NotImplementedError
 
-    def proxy(self, name=None, namespace=None):
-        pass
+#     def deletecollection(self, name=None, namespace=None):
+#         raise NotImplementedError
+
+#     def proxy(self, name=None, namespace=None):
+#         raise NotImplementedError
 
     def request(self, method, path, body=None, **params):
 
@@ -255,8 +268,8 @@ class DynamicClient(object):
             select_header_accept(['application/json', 'application/yaml', 'application/vnd.kubernetes.protobuf'])
 
         # HTTP header `Content-Type`
-        header_params['Content-Type'] = self.client.\
-            select_header_content_type(['*/*'])
+        header_params['Content-Type'] = params.get('content_type', self.client.\
+            select_header_content_type(['*/*']))
 
         # Authentication setting
         auth_settings = ['BearerToken']
