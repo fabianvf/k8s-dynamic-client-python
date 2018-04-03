@@ -4,10 +4,10 @@ import sys
 import json
 from functools import partial
 
-import kubernetes
 from kubernetes import config
 from kubernetes.client.api_client import ApiClient
 from kubernetes.client.rest import ApiException
+
 
 class Resource(object):
 
@@ -40,7 +40,6 @@ class Resource(object):
             groupversion = self.apiversion
         return '<{}({}.{}>)'.format(self.__class__.__name__, groupversion, self.kind)
 
-
     @staticmethod
     def make_resource(prefix, group, apiversion, resource, preferred=False, client=None):
         if prefix == 'oapi':
@@ -51,7 +50,7 @@ class Resource(object):
     @property
     def prefix(self):
         if self._prefix:
-            return self_prefix
+            return self._prefix
         raise NotImplementedError
 
     @property
@@ -71,6 +70,68 @@ class Resource(object):
         return partial(getattr(self.client, name), self)
 
 
+class ResourceField(object):
+
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+    def __repr__(self):
+        keys = sorted(self.__dict__)
+        items = ("{}={!r}".format(k, self.__dict__[k]) for k in keys)
+        return "{}({})".format(type(self).__name__, ", ".join(items))
+
+    def __eq__(self, other):
+        return self.__dict__ == other.__dict__
+
+    def __getitem__(self, name):
+        return self.__dict__[name]
+
+    def __dir__(self):
+        return dir(type(self)) + list(self.__dict__.keys())
+
+
+class ResourceInstance(object):
+
+    def __init__(self, resource, instance):
+        self.resource_type = resource
+        self.attributes = self.__deserialize(instance)
+
+    def __deserialize(self, field):
+        if isinstance(field, dict):
+            return ResourceField(**{
+                k: self.__deserialize(v) for k, v in field.items()
+            })
+        elif isinstance(field, (list, tuple)):
+            return [self.__deserialize(item) for item in field]
+        else:
+            return field
+
+    def __serialize(self, field):
+        if isinstance(field, ResourceField):
+            return {
+                k: self.__serialize(v) for k, v in field.__dict__.items()
+            }
+        elif isinstance(field, (list, tuple)):
+            return [self.__serialize(item) for item in field]
+        else:
+            return field
+
+    def todict(self):
+        return self.__serialize(self.attributes)
+
+    def __repr__(self):
+        return "ResourceInstance[{}]".format(self.attributes.kind)
+
+    def __getattr__(self, name):
+        return getattr(self.attributes, name)
+
+    def __getitem__(self, name):
+        return self.attributes[name]
+
+    def __dir__(self):
+        return dir(type(self)) + list(self.attributes.__dict__.keys())
+
+
 class K8sResource(Resource):
 
     @property
@@ -81,6 +142,7 @@ class K8sResource(Resource):
             return '/api'
         else:
             return '/apis'
+
 
 class OpenshiftResource(Resource):
 
@@ -96,6 +158,7 @@ class OpenshiftResource(Resource):
 
 def flatten(l):
     return [item for sublist in l for item in sublist]
+
 
 class DynamicClient(object):
 
@@ -188,7 +251,7 @@ class DynamicClient(object):
             path_params['namespace'] = namespace
         else:
             resource_path = resource.urls['base']
-        return self.request('get', resource_path, path_params=path_params)
+        return ResourceInstance(resource, self.request('get', resource_path, path_params=path_params))
 
     def get(self, resource, name=None, namespace=None):
         if name is None:
@@ -199,7 +262,7 @@ class DynamicClient(object):
             path_params['namespace'] = namespace
         else:
             resource_path = resource.urls['full']
-        return self.request('get', resource_path, path_params=path_params)
+        return ResourceInstance(resource, self.request('get', resource_path, path_params=path_params))
 
     def create(self, resource, body, namespace=None):
         path_params = {}
@@ -212,7 +275,7 @@ class DynamicClient(object):
                 path_params['namespace'] = body['metadata']['namespace']
         else:
             resource_path = resource.urls['base']
-        return self.request('post', resource_path, path_params=path_params, body=body)
+        return ResourceInstance(resource, self.request('post', resource_path, path_params=path_params, body=body))
 
     def delete(self, resource, name, namespace=None):
         path_params = {'name': name}
@@ -221,7 +284,7 @@ class DynamicClient(object):
             path_params['namespace'] = namespace
         else:
             resource_path = resource.urls['full']
-        return self.request('delete', resource_path, path_params=path_params)
+        return ResourceInstance(resource, self.request('delete', resource_path, path_params=path_params))
 
     def replace(self, resource, body, name=None, namespace=None):
         if name is None:
@@ -237,7 +300,7 @@ class DynamicClient(object):
         else:
             resource_path = resource.urls['full']
 
-        return self.request('put', resource_path, path_params=path_params, body=body)
+        return ResourceInstance(resource, self.request('put', resource_path, path_params=path_params, body=body))
 
     def update(self, resource, body, name=None, namespace=None):
         if name is None:
@@ -255,16 +318,7 @@ class DynamicClient(object):
         content_type = self.client.\
             select_header_content_type(['application/json-patch+json', 'application/merge-patch+json', 'application/strategic-merge-patch+json'])
 
-        return self.request('patch', resource_path, path_params=path_params, body=body, content_type=content_type)
-
-#     def watch(self, name=None, namespace=None):
-#         raise NotImplementedError
-
-#     def deletecollection(self, name=None, namespace=None):
-#         raise NotImplementedError
-
-#     def proxy(self, name=None, namespace=None):
-#         raise NotImplementedError
+        return ResourceInstance(resource, self.request('patch', resource_path, path_params=path_params, body=body, content_type=content_type))
 
     def request(self, method, path, body=None, **params):
 
@@ -279,12 +333,17 @@ class DynamicClient(object):
         form_params = []
         local_var_files = {}
         # HTTP header `Accept`
-        header_params['Accept'] = self.client.\
-            select_header_accept(['application/json', 'application/yaml', 'application/vnd.kubernetes.protobuf'])
+        header_params['Accept'] = self.client.select_header_accept([
+            'application/json',
+            'application/yaml',
+            'application/vnd.kubernetes.protobuf'
+        ])
 
         # HTTP header `Content-Type`
-        header_params['Content-Type'] = params.get('content_type', self.client.\
-            select_header_content_type(['*/*']))
+        if params.get('content_type'):
+            header_params['Content-Type'] = params['content_type']
+        else:
+            header_params['Content-Type'] = self.client.select_header_content_type(['*/*'])
 
         # Authentication setting
         auth_settings = ['BearerToken']
@@ -311,7 +370,7 @@ def main():
             key = resource.urls['namespaced_full']
         else:
             key = resource.urls['full']
-        ret[key] = dict(list(filter(lambda kv: kv[0] != 'client', resource.__dict__.items())))
+        ret[key] = {k: v for k, v in resource.__dict__.items() if k != 'client'}
 
     print(json.dumps(ret, sort_keys=True, indent=4))
     return 0

@@ -6,12 +6,14 @@ import sys
 import json
 import yaml
 
-from urllib3 import disable_warnings
-disable_warnings()
+import urllib3
 
 from dynamic_client import DynamicClient
+from dynamic_client import ResourceInstance
 
-USAGE=""" {cmd}: A dynamic python cli for kubernetes
+urllib3.disable_warnings()
+
+USAGE = """ {cmd}: A dynamic python cli for kubernetes
 
 USAGE:
     {cmd} list RESOURCE [-n NAMESPACE]
@@ -28,127 +30,6 @@ USAGE:
 """
 
 
-def methods(name=None):
-    method_mapping = {
-        'list': list_resources,
-        'get': get,
-        'delete': delete,
-        'create': create,
-        'update': update,
-        'replace': replace
-    }
-    if name:
-        return method_mapping[name]
-    return method_mapping
-
-def parse_namespace(args):
-    args = list(args)
-    namespace = None
-    if '-n' in args:
-        pos = args.index('-n')
-        args.pop(pos)
-        namespace = args.pop(pos)
-    return namespace, args
-
-def list_resources(resource, *args):
-    namespace, args = parse_namespace(args)
-    if args:
-        raise RuntimeError("Too many arguments provided to `list`")
-    return resource.list(namespace=namespace)
-
-
-def get(resource, *args):
-    namespace, args = parse_namespace(args)
-    if len(args) > 1:
-        raise RuntimeError("Too many arguments provided to `get`")
-    name = args[0] if args else None
-    return resource.get(name=name, namespace=namespace)
-
-
-def delete(resource, *args):
-    namespace, args = parse_namespace(args)
-    if not args:
-        raise RuntimeError("Missing argument: `delete` requires a name for a resource")
-    elif len(args) > 1:
-        raise RuntimeError("Too many arguments provided to `delete`")
-
-    name = args[0]
-
-    return resource.delete(name, namespace)
-
-
-def create(resource, *args):
-    args = list(args)
-    namespace, args = parse_namespace(args)
-
-    pos = args.index('-f')
-    args.pop(pos)
-    filename = args.pop(pos)
-
-    if args:
-        raise RuntimeError("Too many arguments provided to `create`")
-
-    with open(filename, 'r') as f:
-        body = yaml.load(f.read())
-
-    return resource.create(body, namespace=namespace)
-
-
-def update(resource, *args):
-    args = list(args)
-    namespace, args = parse_namespace(args)
-
-    pos = args.index('-f')
-    args.pop(pos)
-    filename = args.pop(pos)
-
-    with open(filename, 'r') as f:
-        body = yaml.load(f.read())
-
-    if len(args) > 1:
-        name = args.pop()
-    else:
-        name = None
-
-    if args:
-        raise RuntimeError("Too many arguments provided to `update`")
-
-    return resource.update(body, name=name, namespace=namespace)
-
-
-def replace(resource, *args):
-    args = list(args)
-    namespace, args = parse_namespace(args)
-
-    pos = args.index('-f')
-    args.pop(pos)
-    filename = args.pop(pos)
-
-    with open(filename, 'r') as f:
-        body = yaml.load(f.read())
-
-    if len(args) > 1:
-        name = args.pop()
-    else:
-        name = None
-
-    if args:
-        raise RuntimeError("Too many arguments provided to `update`")
-
-    return resource.replace(body, name=name, namespace=namespace)
-
-def default_search(term):
-    def inner(resource):
-        for value in resource.__dict__.values():
-            if term == value:
-                return resource.preferred
-            elif isinstance(value, (list, tuple)):
-                if term in value:
-                    return resource.preferred
-        return False
-    return inner
-
-
 def main():
     if len(sys.argv) <= 2 or '--help' in sys.argv or '-h' in sys.argv:
         print(USAGE.format(cmd=sys.argv[0]))
@@ -156,6 +37,7 @@ def main():
     action = sys.argv[1]
     search_term = sys.argv[2]
     args = sys.argv[3:]
+    kwargs = parse_args(args)
 
     helper = DynamicClient()
     search_results = helper.search_resources(default_search(search_term))
@@ -165,10 +47,78 @@ def main():
         print('Invocation error: Search term `{}` did not match any resource.'.format(search_term), file=sys.stderr)
         sys.exit(1)
     try:
-        return methods(action)(resource, *args)
+        return globals()[action](resource, **kwargs)
     except KeyError:
-        print('Invocation error: Action `{}` is not supported, supported actions are {}'.format(action, '|'.join(methods().keys())), file=sys.stderr)
+        print('Invocation error: Action `{}` is not supported, supported actions are [get|list|update|replace|delete]'.format(action), file=sys.stderr)
         sys.exit(1)
+
+
+def parse_args(args):
+    args = list(args)
+    kwargs = {
+        'namespace': parse_flag('-n', args),
+        'filename': parse_flag('-f', args),
+    }
+    kwargs['name'] = args.pop(0) if args else None
+    if args:
+        raise RuntimeError('Too many arguments, parsed {}, not sure what to do with {}'.format(kwargs, args))
+    return {k: v for k, v in kwargs.items() if v}
+
+
+def parse_flag(flag, args):
+    value = None
+    if flag in args:
+        pos = args.index(flag)
+        args.pop(pos)
+        value = args.pop(pos)
+    return value
+
+
+def list_resources(resource, namespace=None):
+    return resource.list(namespace=namespace)
+
+
+def get(resource, name=None, namespace=None):
+    return resource.get(name=name, namespace=namespace)
+
+
+def delete(resource, name=None, namespace=None):
+    return resource.delete(name, namespace)
+
+
+def create(resource, namespace=None, filename=None):
+    with open(filename, 'r') as f:
+        body = yaml.load(f.read())
+
+    return resource.create(body, namespace=namespace)
+
+
+def update(resource, name=None, namespace=None, filename=None):
+    with open(filename, 'r') as f:
+        body = yaml.load(f.read())
+
+    return resource.update(body, name=name, namespace=namespace)
+
+
+def replace(resource, name=None, namespace=None, filename=None):
+    with open(filename, 'r') as f:
+        body = yaml.load(f.read())
+
+    return resource.replace(body, name=name, namespace=namespace)
+
+
+def default_search(term):
+    terms = [term.lower(), term.lower()[:-1]]
+
+    def inner(resource):
+        for value in resource.__dict__.values():
+            if str(value).lower() in terms or str(value).lower()[:-1] in terms:
+                return resource.preferred
+            elif isinstance(value, (list, tuple)):
+                if term in value:
+                    return resource.preferred
+        return False
+    return inner
 
 
 def pprint(x):
@@ -177,7 +127,8 @@ def pprint(x):
 
 if __name__ == '__main__':
     try:
-        pprint(main())
+        resource = main()
+        pprint(resource.todict())
     except Exception as e:
         print(USAGE.format(cmd=sys.argv[0]))
         print('Invocation failed! {}'.format(e), file=sys.stderr)
