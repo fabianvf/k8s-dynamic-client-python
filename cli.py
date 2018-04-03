@@ -6,6 +6,9 @@ import sys
 import json
 import yaml
 
+from urllib3 import disable_warnings
+disable_warnings()
+
 from dynamic_client import DynamicClient
 
 USAGE=""" {cmd}: A dynamic python cli for kubernetes
@@ -174,9 +177,7 @@ def pprint(x):
 
 if __name__ == '__main__':
     try:
-        import ipdb
-        with ipdb.launch_ipdb_on_exception():
-            pprint(main())
+        pprint(main())
     except Exception as e:
         print(USAGE.format(cmd=sys.argv[0]))
         print('Invocation failed! {}'.format(e), file=sys.stderr)
