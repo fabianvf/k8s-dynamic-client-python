@@ -4,6 +4,9 @@ import sys
 import json
 from functools import partial
 
+import yaml
+from pprint import pformat
+
 from kubernetes import config
 from kubernetes.client.api_client import ApiClient
 from kubernetes.client.rest import ApiException
@@ -76,9 +79,7 @@ class ResourceField(object):
         self.__dict__.update(kwargs)
 
     def __repr__(self):
-        keys = sorted(self.__dict__)
-        items = ("{}={!r}".format(k, self.__dict__[k]) for k in keys)
-        return "{}({})".format(type(self).__name__, ", ".join(items))
+        return pformat(self.__dict__)
 
     def __eq__(self, other):
         return self.__dict__ == other.__dict__
@@ -116,11 +117,17 @@ class ResourceInstance(object):
         else:
             return field
 
-    def todict(self):
+    def to_dict(self):
         return self.__serialize(self.attributes)
 
+    def to_str(self):
+        return repr(self)
+
     def __repr__(self):
-        return "ResourceInstance[{}]".format(self.attributes.kind)
+        return "ResourceInstance[{}]:\n  {}".format(
+            self.attributes.kind,
+            '  '.join(yaml.safe_dump(self.to_dict()).splitlines(True))
+        )
 
     def __getattr__(self, name):
         return getattr(self.attributes, name)
@@ -372,7 +379,7 @@ def main():
             key = resource.urls['full']
         ret[key] = {k: v for k, v in resource.__dict__.items() if k != 'client'}
 
-    print(json.dumps(ret, sort_keys=True, indent=4))
+    print(yaml.safe_dump(ret))
     return 0
 
 

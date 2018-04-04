@@ -121,14 +121,10 @@ def default_search(term):
     return inner
 
 
-def pprint(x):
-    print(json.dumps(x, sort_keys=True, indent=4))
-
-
 if __name__ == '__main__':
     try:
         resource = main()
-        pprint(resource.todict())
+        print(resource)
     except Exception as e:
         print(USAGE.format(cmd=sys.argv[0]))
         print('Invocation failed! {}'.format(e), file=sys.stderr)
