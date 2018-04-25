@@ -169,9 +169,8 @@ def flatten(l):
 
 class DynamicClient(object):
 
-    def __init__(self):
-        config.load_kube_config()
-        self.client = ApiClient()
+    def __init__(self, client):
+        self.client = client
         self._groups = self.get_api_groups()
         self._resources = flatten([self.get_resources_for_group(*group_parts) for group_parts in self._groups])
 
@@ -370,7 +369,8 @@ class DynamicClient(object):
 
 
 def main():
-    client = DynamicClient()
+    config.load_kube_config()
+    client = DynamicClient(ApiClient())
     ret = {}
     for resource in client._resources:
         if resource.namespaced:

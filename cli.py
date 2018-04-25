@@ -8,6 +8,8 @@ import yaml
 
 import urllib3
 
+import kubernetes
+
 from dynamic_client import DynamicClient
 from dynamic_client import ResourceInstance
 
@@ -35,11 +37,14 @@ def main():
         print(USAGE.format(cmd=sys.argv[0]))
         sys.exit()
     action = sys.argv[1]
+    if action == 'list':
+        action = 'list_resources'
     search_term = sys.argv[2]
     args = sys.argv[3:]
     kwargs = parse_args(args)
 
-    helper = DynamicClient()
+    kubernetes.config.load_kube_config()
+    helper = DynamicClient(kubernetes.client.ApiClient())
     search_results = helper.search_resources(default_search(search_term))
     try:
         resource = search_results[0]
@@ -123,7 +128,9 @@ def default_search(term):
 
 if __name__ == '__main__':
     try:
-        resource = main()
+        import ipdb
+        with ipdb.launch_ipdb_on_exception():
+            resource = main()
         print(resource)
     except Exception as e:
         print(USAGE.format(cmd=sys.argv[0]))
